@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>节拍 · 工作台</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="brand"><span class="logo">✦</span><div><strong>节拍 · 工作台</strong><small>把忙碌变成可复盘的成果</small></div></div>
+      <div class="top-actions"><button class="outline open-browser-workspace" id="open-browser-workspace" type="button" hidden>在浏览器中打开</button><button class="user-chip" id="open-data-dialog" type="button"><span id="current-user-avatar" class="avatar avatar-top" aria-hidden="true"></span><span>当前用户</span><strong id="current-user-name">我的工作台</strong><span>⌄</span></button><span class="sync" id="storage-mode-status">独立浏览器模式 · 数据仅保存于当前浏览器</span></div>
+    </div>
+  </header>
+  <nav class="main-nav" aria-label="功能菜单"><div class="nav-inner"><button class="nav-button flow-trigger" id="open-flow-mode" type="button" data-target="flow-mode" aria-controls="flow-mode"><span class="nav-logo-mark" aria-hidden="true">✦</span><span>心流模式</span></button><div class="nav-menu" data-menu="work"><button class="nav-button active" type="button" data-target="work-entry" aria-controls="work-entry" aria-haspopup="true" aria-expanded="false">工作录入</button><div class="nav-dropdown" aria-label="工作录入选项"><button class="nav-option active" type="button" data-target="work-entry"><span>快速录入</span><small>登记一项工作并自动生成总结</small></button><button class="nav-option" type="button" data-target="work-backfill"><span>工作补录</span><small>为此前未录入的日期段补齐工时</small></button></div></div><div class="nav-menu" data-menu="summary"><button class="nav-button" type="button" data-target="period-summary" data-summary-mode="week" aria-controls="period-summary" aria-haspopup="true" aria-expanded="false">工作总结</button><div class="nav-dropdown" aria-label="工作总结选项"><button class="nav-option" type="button" data-target="daily-summary"><span>本日工作报告</span><small>按日期查看当天工作内容与日报</small></button><button class="nav-option" type="button" data-target="period-summary" data-summary-mode="week"><span>周度</span><small>自动整理本周工作进展与计划</small></button><button class="nav-option" type="button" data-target="period-summary" data-summary-mode="month"><span>月度</span><small>按月回顾项目投入和阶段成果</small></button><button class="nav-option" type="button" data-target="period-summary" data-summary-mode="year"><span>年度</span><small>汇总全年项目成果和工作投入</small></button></div></div><button class="nav-button" type="button" data-target="task-center" aria-controls="task-center">任务清单</button><div class="nav-menu" data-menu="records"><button class="nav-button" type="button" data-target="work-records" aria-controls="work-records" aria-haspopup="true" aria-expanded="false">工作记录</button><div class="nav-dropdown" aria-label="工作记录选项"><button class="nav-option" type="button" data-target="work-records"><span>最近工作</span><small>查看、编辑或删除已录入的工作记录</small></button><button class="nav-option" type="button" data-target="dashboard"><span>数据可视化</span><small>查看项目占比和周、月、年度分析图</small></button></div></div></div></nav>
+  <main>
+    <div class="intro">
+      <div><p class="eyebrow">个人工作复盘中心</p><h1>记录每一份投入，快速生成有分量的总结。</h1></div>
+    </div>
+    <section class="flow-mode feature-panel" id="flow-mode"><div class="flow-shell"><div class="flow-topbar"><div class="flow-brand"><span class="flow-brand-mark">✦</span><span>心流模式</span></div><div class="flow-top-actions"><div class="flow-live"><span id="flow-live-label">尚未开始</span><b id="flow-timer">00:00:00</b></div><button class="flow-exit" id="flow-data-recovery" type="button">保存状态 / 恢复</button><button class="flow-exit" id="leave-flow-mode" type="button">暂离心流</button></div></div><div class="flow-content"><div class="flow-intro"><p class="eyebrow">◎ 专注工作计时</p><h2>让时间只流向一件真正重要的事。</h2></div><form class="flow-form" id="flow-form"><label>所属项目<input id="flow-project" list="project-history" placeholder="计时中可选择或填写项目" autocomplete="off" maxlength="120"></label><p id="flow-save-state" role="status">点击顶部心流模式即可开始，项目可在计时中补选。</p><label>工作类型<select id="flow-category"><option>项目推进</option><option>会议讨论</option><option>对外协商</option><option>项目整理</option></select></label><div class="task-composer"><div class="task-composer-title"><span>任务清单</span></div><div class="task-entry-row"><input id="flow-task-input" maxlength="240" placeholder="输入一项任务后按 Enter 或点击添加"><button class="task-add" id="add-flow-task" type="button">添加任务</button></div><ol class="task-draft-list" id="flow-task-list"></ol></div><div class="flow-actions"><button class="flow-meeting" id="flow-meeting-toggle" type="button">● 快速会议</button><button class="primary" id="start-flow-session" type="submit" disabled>开始心流</button></div></form></div></div></section>
+    <section class="dashboard feature-panel" id="dashboard">
+      <div class="dashboard-hero"><div><p class="eyebrow">▣ 数据分析首页</p><h2>把每天的投入，看成清晰的工作节奏。</h2><p class="section-sub">自动汇总本地工作记录，快速查看今日项目投入，以及本周、本月、年度的进度与计划覆盖情况。</p></div><div class="dashboard-kpis"><div class="dashboard-kpi"><span>今日投入</span><b id="dashboard-today-hours">0.0h</b></div><div class="dashboard-kpi"><span>本周投入</span><b id="dashboard-week-hours">0.0h</b></div><div class="dashboard-kpi"><span>本月投入</span><b id="dashboard-month-hours">0.0h</b></div><div class="dashboard-kpi"><span>年度投入</span><b id="dashboard-year-hours">0.0h</b></div></div></div>
+      <div class="dashboard-layout"><section class="dashboard-card"><div class="section-top"><div><p class="eyebrow">◎ 今日项目投入</p><h2>项目时长占比</h2><p class="section-sub">按实际记录时段统计，自动跳过断档。</p></div></div><div class="project-share" id="dashboard-today-share"></div></section><section class="dashboard-card"><div class="section-top"><div><p class="eyebrow">✦ 今日概览</p><h2>当日工作状态</h2><p class="section-sub">从已记录的任务、进度和下一步计划中提炼。</p></div></div><div class="dashboard-insights" id="dashboard-today-insights"></div></section></div>
+      <section class="dashboard-card"><div class="section-top"><div><p class="eyebrow">▤ 周期分析</p><h2>工作进度与计划</h2><p class="section-sub">蓝色表示平均进度，绿色表示已填写下一步计划的覆盖率。</p></div></div><div class="dashboard-periods" id="dashboard-periods"></div></section>
+    </section>
+    <div class="grid">
+      <section class="card form-card feature-panel active" id="work-entry">
+        <div class="section-top"><div><h2 id="form-heading">✦ 登记一项工作</h2><p class="section-sub" id="form-subtitle">一条记录，自动进入周度、月度和年度总结。</p></div><span class="pill" id="form-mode">快速录入</span></div>
+        <form id="work-form">
+          <div class="two-col"><label>日期<input id="work-date" type="date" required></label><label>这项工作是什么？<input id="title" maxlength="120" placeholder="例如：完成客户方案第一稿" required></label></div>
+          <div class="two-col equal"><label>所属项目<input id="project" list="project-history" placeholder="输入或选择已登记项目" autocomplete="off"><datalist id="project-history"></datalist></label><label>工作类型<select id="category"><option>项目推进</option><option>会议讨论</option><option>对外协商</option><option>项目整理</option></select></label></div>
+          <div class="two-col equal"><label>本项目工作起始时间<input id="start-time" type="time" value="09:00" required></label><label>本项目工作结束时间<input id="end-time" type="time" value="10:00" required></label></div>
+          <div class="two-col equal"><div class="duration-card">自动计算的投入时长<strong id="duration-preview">1.0 小时</strong></div><label>当前进度（%）<input id="progress" type="number" min="0" max="100" step="5" value="100" required></label></div>
+          <label>本次产出<textarea id="outcome" placeholder="例如：确定方案结构，并完成视觉方向初稿"></textarea></label>
+          <label>下一步<textarea id="next-step" placeholder="例如：周三前收集反馈，完善细节并定稿"></textarea></label>
+          <button class="pain-button" id="open-pain-dialog" type="button">设置本次工作痛点与解决情况</button>
+          <div class="meeting-controls"><button class="meeting-toggle" id="meeting-toggle" type="button">● 快速开会</button><div class="meeting-status" id="meeting-status">一键开始计时；结束后填写项目、会议内容、产出和任务清单。</div></div>
+          <section class="pending-task-panel" id="pending-task-panel" hidden><div class="pending-task-head"><div><h3 id="pending-task-title">待完成任务</h3><p id="pending-task-subtitle">未完成任务会按所属项目自动汇总。</p></div><span class="pill" id="pending-task-count">0 项</span></div><div class="pending-task-groups" id="pending-task-groups"></div></section>
+          <div class="actions" style="margin-top:0"><button class="dialog-cancel" id="cancel-edit" type="button" hidden>取消修改</button><button class="primary" id="save-work" type="submit">＋ 保存工作记录</button></div>
+      </form>
+    </section>
+    <section class="card task-center feature-panel" id="task-center"><div class="task-center-hero"><p class="eyebrow">☑ 项目待办中心</p><h2>把所有待完成任务，放在同一处推进。</h2><p>按所属项目归类查看、补充和完成任务；这里的进度会即时同步到快速录入、心流模式和会议任务清单。</p></div><div class="task-center-body"><form class="task-center-add-form" id="task-center-form"><label>所属项目<input id="task-center-project" list="project-history" maxlength="120" placeholder="输入或选择项目" autocomplete="off" required></label><label>新增任务<input id="task-center-task" maxlength="240" placeholder="例如：整理现场施工方案并确认报价" required></label><button class="primary" type="submit">＋ 新增任务</button></form><div class="task-center-list-head"><div><h3>待完成任务</h3><p>完成或恢复任务后，各页面会同步刷新。</p></div><span class="pill" id="task-center-count">0 项待完成</span></div><div class="task-center-groups" id="task-center-groups"></div></div></section>
+      <section class="card form-card feature-panel" id="work-backfill">
+        <div class="section-top"><div><h2>⟲ 工作补录</h2><p class="section-sub">为此前未登记的日期段快速补齐项目工时，并自动计入日报、周度、月度和年度统计。</p></div><span class="pill">工作补录</span></div>
+        <form id="backfill-form">
+          <label>所属项目<input id="backfill-project" list="project-history" placeholder="输入或选择已登记项目" autocomplete="off" required></label>
+          <div class="two-col equal"><label>开始日期<input id="backfill-start-date" type="date" required></label><label>结束日期<input id="backfill-end-date" type="date" required></label></div>
+          <div class="two-col equal"><label>每日平均工作时间（小时）<input id="backfill-hours" type="number" min="0.1" max="24" step="0.5" value="8" required></label><div class="backfill-preview" id="backfill-preview">选择日期段后，将在每一天生成一条补录记录。</div></div>
+          <label>补录说明（可选）<textarea id="backfill-note" placeholder="例如：完成历史资料整理、方案优化与项目跟进"></textarea></label>
+          <button class="primary" type="submit">＋ 生成补录工作记录</button>
+        </form>
+      </section>
+      <section class="card report-card feature-panel" id="period-summary">
+        <div class="report-top"><div><p class="eyebrow">▣ 自动生成报告</p><h2 id="report-title">周度</h2><p class="section-sub" id="report-range"></p></div><div class="report-controls"><button class="edit-report" id="toggle-period-report" type="button">编辑报告</button><label>选择日期 <input id="anchor-date" type="date"></label></div></div>
+        <div class="metrics"><div class="metric"><b id="hours-total">0.0</b><span>投入小时（已记录时段）</span></div><div class="metric"><b id="done-total">0</b><span>已完成事项</span></div><div class="metric"><b id="project-total">0</b><span>涉及项目</span></div></div>
+        <label class="report-label">报告预览<textarea id="report-text" class="report-text" readonly></textarea></label>
+        <div class="export-actions"><button class="secondary" id="copy-report" type="button">复制</button><button class="secondary" id="export-word" type="button">Word</button><button class="outline" id="export-ppt" type="button">PowerPoint</button><button class="outline" id="export-pdf" type="button">PDF</button></div>
+        <div class="embedded-insight"><div class="section-top"><div><h2>项目投入可视化</h2><p class="section-sub">用项目时长占比图快速识别本期工作重心。</p></div></div><div class="project-share" id="period-project-share"></div></div>
+      </section>
+    </div>
+    <section class="card daily-report-card feature-panel" id="daily-summary">
+      <div class="daily-report-top"><div><p class="eyebrow">▣ 按日期查看</p><h2>本日工作报告</h2><p class="section-sub">选择日期后，快速查看当天工作内容与自动整理的日报总结。</p></div><div class="daily-report-controls"><button class="edit-report" id="toggle-daily-report" type="button">编辑报告</button><label>选择日期 <input id="daily-date" type="date"></label></div></div>
+      <div class="daily-metrics"><div class="daily-metric"><b id="daily-hours-total">0.0</b><span>本日投入小时</span></div><div class="daily-metric"><b id="daily-done-total">0</b><span>已完成事项</span></div><div class="daily-metric"><b id="daily-project-total">0</b><span>涉及项目</span></div></div>
+      <div class="daily-report-grid"><div><h3 class="daily-work-head">工作明细（可追溯）</h3><div class="daily-work-list" id="daily-work-list"></div></div><label class="daily-summary">本日工作报告总结<textarea id="daily-report-text" class="daily-report-text" readonly></textarea></label></div>
+      <button class="secondary daily-copy" id="copy-daily-report" type="button">复制本日报告</button>
+      <div class="embedded-insight"><div class="section-top"><div><h2>项目投入可视化</h2><p class="section-sub">用项目时长占比图快速识别当日工作重心。</p></div></div><div class="project-share" id="daily-project-share"></div></div>
+    </section>
+    <div class="lower">
+      <section class="card recent-card feature-panel" id="work-records">
+        <div class="section-top"><div><h2>最近工作</h2><p class="section-sub">每条记录都会自动计入总结。</p></div><span class="pill" id="log-count">0 条记录</span></div>
+        <div class="list" id="log-list"></div>
+      </section>
+    </div>
+  </main>
+  <div class="toast" id="toast"></div>
+  <dialog id="pain-dialog">
+    <form class="dialog-body" id="pain-form">
+      <h2>本次工作痛点</h2>
+      <p>把问题和处理状态记下来，周度、月度、年度总结会自动汇总。</p>
+      <label>遇到的痛点<textarea id="pain-point" placeholder="例如：需求方向不够清晰，影响方案推进"></textarea></label>
+      <label>解决方案<textarea id="pain-solution" placeholder="例如：组织需求澄清会，确认优先级并同步执行方案"></textarea></label>
+      <div><label>解决状态</label><div class="status-options"><label><input name="pain-status" type="radio" value="已解决" checked> 已解决</label><label><input name="pain-status" type="radio" value="未解决"> 未解决</label></div></div>
+      <label>处理说明 / 待跟进行动<textarea id="pain-response" placeholder="例如：已完成需求澄清；或：等待客户确认优先级"></textarea></label>
+      <div class="dialog-actions"><button class="dialog-cancel" id="close-pain-dialog" type="button">暂不设置</button><button class="primary" type="submit">保存痛点</button></div>
+    </form>
+  </dialog>
+  <dialog id="data-dialog">
+    <div class="dialog-body">
+      <h2>用户与数据管理</h2>
+      <p>每位使用者都有独立工作区。导入备份时会恢复为新的独立用户，不会把不同人的记录混在一起。</p>
+      <div class="user-list" id="user-list"></div>
+      <h3>新建独立用户</h3><p>创建空白工作区，不会修改当前用户资料。</p>
+      <label>新用户名称<input id="new-profile-name" maxlength="30" placeholder="例如：张三 / 设计组"></label>
+      <button class="primary" id="create-profile" type="button">新建独立用户</button>
+      <div class="data-actions"><button class="secondary" id="export-data" type="button">导出当前用户备份</button><label class="import-data">导入备份到新用户<input id="import-data" type="file" accept=".json,application/json"></label></div>
+      <div class="dialog-actions"><button class="dialog-cancel" id="close-data-dialog" type="button">完成</button></div>
+    </div>
+  </dialog>
+  <dialog id="meeting-dialog">
+    <form class="dialog-body" id="meeting-form">
+      <h2>会议结束，补充会议记录</h2>
+      <p id="meeting-time-summary">本次会议时长将自动计入当天工作统计。</p>
+      <label>所属项目<input id="meeting-project" list="project-history" placeholder="输入或选择已登记项目" autocomplete="off"></label>
+      <label>会议内容<textarea id="meeting-dialog-content" placeholder="例如：讨论客户需求优先级、项目节点和责任分工" required></textarea></label>
+      <label>会议产出<textarea id="meeting-outcome" placeholder="例如：确认本周交付清单和需求调整方案"></textarea></label>
+      <div class="task-composer"><div class="task-composer-title"><span>任务清单</span><small>自动编号，可逐条完成</small></div><div class="task-entry-row"><input id="meeting-task-input" maxlength="240" placeholder="输入一项任务后按 Enter 或点击添加"><button class="task-add" id="add-meeting-task" type="button">添加任务</button></div><ol class="task-draft-list" id="meeting-task-list"></ol><p class="task-composer-hint">保存会议后，未完成任务会同步到所属项目的待完成任务中。</p></div>
+      <div class="dialog-actions"><button class="dialog-cancel" id="cancel-meeting-record" type="button">不记录本次会议</button><button class="primary" type="submit">保存会议记录</button></div>
+    </form>
+  </dialog>
+  <span class="app-version" id="app-version" aria-label="当前版本">V1.1.3</span>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

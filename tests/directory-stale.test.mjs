@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {newWorkspace} from '../src/model/workspace.js';
+import {createDirectoryRepository} from '../src/storage/directory.js';
+import {createWorkspaceController} from '../src/storage/controller.js';
+const primary='beat-workbench.workspace.json',backup='beat-workbench.previous.json';
+const nativeMessage='An operation that depends on state cached in an interface object was made but the state had changed since it was read from disk.';
+function disk(){const initial=newWorkspace(),files=new Map([[primary,JSON.stringify(initial)]]),events=[];let fault=null;
+ const hit=(file,stage)=>{events.push({file,stage});if(fault?.file===file&&fault.stage===stage&&fault.count-->0){fault.effect?.();throw Object.assign(Error(nativeMessage),{name:fault.name||'InvalidStateError'});}};
+ const handle={name:'synthetic',getFileHandle:async(file,options={})=>{hit(file,'handle');if(!files.has(file)){if(!options.create)throw Object.assign(Error('missing'),{name:'NotFoundError'});files.set(file,'');}return {getFile:async()=>{hit(file,'getFile');const captured=files.get(file);return {text:async()=>{hit(file,'text');return captured;}};},createWritable:async()=>{hit(file,'createWritable');let buffer;return {write:async value=>{hit(file,'write');buffer=value;},close:async()=>{hit(file,'close');files.set(file,buffer);},abort:async()=>{hit(file,'abort');}};}};}};
+ return {initial,files,events,handle,setFault:value=>fault=value};
+}
+test('one stale read reacquires a fresh File snapshot instead of failing a recoverable checkpoint',async()=>{
+ const d=disk(),r=createDirectoryRepository(d.handle);d.setFault({file:primary,stage:'text',count:1});assert.equal((await r.load()).workspaceId,d.initial.workspaceId);assert.equal(d.events.filter(e=>e.stage==='getFile').length,2);assert.equal(d.events.some(e=>e.stage==='write'),false);
+});
+for(const stage of ['getFile','text','createWritable','write','close'])test('persistent native error identifies exact '+stage+' phase without replaying writes',async()=>{
+ const d=disk(),r=createDirectoryRepository(d.handle);await r.load();d.setFault({file:stage==='getFile'||stage==='text'?primary:backup,stage,count:9});
+ await assert.rejects(r.save({...d.initial,revision:1},0),e=>{assert.equal(e.directoryStage,stage);assert.equal(e.directoryFile,stage==='getFile'||stage==='text'?primary:backup);assert.equal(e.cause.name,'InvalidStateError');return true;});assert.equal(d.files.get(primary),JSON.stringify(d.initial));assert.ok(d.events.filter(e=>e.file===backup&&e.stage===stage).length<=1||stage==='getFile'||stage==='text');
+});
+test('fresh read sees externally changed bytes and conflict stops all writes',async()=>{
+ const d=disk(),r=createDirectoryRepository(d.handle);await r.load();const external={...d.initial,revision:1,updatedAt:new Date().toISOString()};d.setFault({file:primary,stage:'text',count:1,effect:()=>d.files.set(primary,JSON.stringify(external))});await assert.rejects(r.save({...d.initial,revision:1},0),{code:'conflict'});assert.equal(d.events.some(e=>e.stage==='write'),false);assert.equal(d.files.get(primary),JSON.stringify(external));
+});
+test('controller keeps pending after native close failure and manual retry rechecks before saving once',async()=>{
+ const d=disk(),c=createWorkspaceController({browserRepo:{},settings:{read:async()=>({mode:'directory',handle:d.handle})},directoryFactory:createDirectoryRepository});await c.initialize();d.setFault({file:primary,stage:'close',count:1});await assert.rejects(c.commit(w=>{w.profiles[0].name='Synthetic edited';return w;}));assert.equal(c.getWorkspace().profiles[0].name,d.initial.profiles[0].name);assert.ok(c.getPending());assert.match(c.getState().error,/关闭|提交/);await c.retry();assert.equal(c.getPending(),null);assert.equal(c.getWorkspace().profiles[0].name,'Synthetic edited');assert.equal(JSON.parse(d.files.get(primary)).revision,1);
+});
+
+test('a transient getFile NotReadableError refreshes once and permissions are never retried',async()=>{
+ const d=disk(),r=createDirectoryRepository(d.handle);d.setFault({file:primary,stage:'getFile',name:'NotReadableError',count:1});assert.equal((await r.load()).workspaceId,d.initial.workspaceId);const before=d.events.length;d.setFault({file:primary,stage:'getFile',name:'NotAllowedError',count:9});await assert.rejects(r.load(),e=>e.name==='NotAllowedError'&&e.directoryStage==='getFile');assert.equal(d.events.slice(before).filter(e=>e.stage==='getFile').length,1);
+});
+test('external primary changes during backup stop before primary writer creation',async()=>{
+ const d=disk(),r=createDirectoryRepository(d.handle);await r.load();const external={...d.initial,revision:1};const original=d.handle.getFileHandle;d.handle.getFileHandle=async(file,options)=>{const handle=await original(file,options);if(file===backup){const create=handle.createWritable;handle.createWritable=async()=>{const writer=await create();const close=writer.close;writer.close=async()=>{await close();d.files.set(primary,JSON.stringify(external));};return writer;};}return handle;};await assert.rejects(r.save({...d.initial,revision:1},0),{code:'conflict'});assert.equal(d.events.some(e=>e.file===primary&&e.stage==='createWritable'),false);assert.equal(d.files.get(primary),JSON.stringify(external));
+});
+test('stale verification refresh is read-only; committed close-error retry does not replay primary write',async()=>{
+ const d=disk(),c=createWorkspaceController({browserRepo:{},settings:{read:async()=>({mode:'directory',handle:d.handle})},directoryFactory:createDirectoryRepository});await c.initialize();let closeFails=true;const original=d.handle.getFileHandle;d.handle.getFileHandle=async(file,options)=>{const handle=await original(file,options);if(file===primary){const create=handle.createWritable;handle.createWritable=async()=>{const writer=await create();const close=writer.close;writer.close=async()=>{await close();if(closeFails){closeFails=false;throw Object.assign(Error(nativeMessage),{name:'InvalidStateError'});}d.setFault({file:primary,stage:'text',count:1});};return writer;};}return handle;};await assert.rejects(c.commit(w=>{w.profiles[0].name='committed';return w;}),e=>e.directoryOperation==='primary'&&e.directoryStage==='close');const writes=d.events.filter(e=>e.file===primary&&e.stage==='write').length;await c.retry();assert.equal(c.getWorkspace().profiles[0].name,'committed');assert.equal(d.events.filter(e=>e.file===primary&&e.stage==='write').length,writes);
+ await c.commit(w=>{w.profiles[0].name='verified';return w;});assert.equal(c.getWorkspace().profiles[0].name,'verified');assert.equal(c.getPending(),null);
+});
+test('long-running checkpoint transient read recovers and genuine failure preserves last persisted checkpoint/pending',async()=>{
+ const {createFlowStartIntent,startDurableFlow,settleCheckpointFlow}=await import('../src/timers/sessions.js');const d=disk(),c=createWorkspaceController({browserRepo:{},settings:{read:async()=>({mode:'directory',handle:d.handle})},directoryFactory:createDirectoryRepository});await c.initialize();const start=Date.now()-3*3600000,i=createFlowStartIntent(d.initial.workspaceId,d.initial.activeProfileId,'A',start);await startDurableFlow(c,i);const checkpoint=async(end)=>c.commit(w=>{const s=w.sessions[0];s.draft.segments=[{start,end}];s.elapsedMs=end-start;s.checkpointAt=new Date(end).toISOString();return w;});
+ d.setFault({file:primary,stage:'text',count:1});await checkpoint(start+2*3600000);assert.equal(c.getWorkspace().sessions[0].elapsedMs,2*3600000);d.setFault({file:primary,stage:'text',count:2});await assert.rejects(checkpoint(start+2.5*3600000));assert.equal(c.getWorkspace().sessions[0].elapsedMs,2*3600000);assert.equal(c.getPending().sessions[0].elapsedMs,2.5*3600000);
+ const reopened=createWorkspaceController({browserRepo:{},settings:{read:async()=>({mode:'directory',handle:d.handle})},directoryFactory:createDirectoryRepository});await reopened.initialize();await settleCheckpointFlow(reopened,i.id);assert.equal(reopened.getWorkspace().profiles[0].records[0].hours,2);assert.equal(reopened.getWorkspace().sessions.length,0);await assert.rejects(c.retry(),{code:'conflict'});assert.equal(c.getPending().sessions[0].elapsedMs,2.5*3600000);
+});

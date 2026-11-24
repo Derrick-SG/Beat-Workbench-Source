@@ -1,0 +1,9 @@
+import {request as httpRequest} from 'node:http';
+import test from 'node:test';import assert from 'node:assert/strict';import {createServer} from '../scripts/serve.mjs';import {once} from 'node:events';
+test('loopback API rejects hostile origins/Host/missing or invalid token and never exposes config',async()=>{
+ let calls=0;const server=createServer({serviceFactory:()=>({dispatch:async()=>{calls++;return {configured:false};},close:async()=>{}})});server.listen(0,'127.0.0.1');await once(server,'listening');const base='http://127.0.0.1:'+server.address().port;
+ try{for(const origin of [undefined,'null','http://evil.invalid'])assert.equal((await fetch(base+'/api/notion/import',{method:'POST',headers:{...(origin?{Origin:origin}:{}),'Content-Type':'application/json'},body:'{}'})).status,403);const wrongHost=await new Promise((resolve,reject)=>{const req=httpRequest(base+'/api/notion/session',{headers:{Origin:base,Host:'evil.invalid'}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);req.end();});assert.equal(wrongHost,403);
+ const session=await(await fetch(base+'/api/notion/session',{headers:{Origin:base}})).json();assert.equal(session.token.length,64);assert.equal((await fetch(base+'/api/notion/status',{headers:{Origin:base,'X-Workbench-Token':'é'.repeat(64)}}).catch(()=>({status:403}))).status,403);
+ const headers={Origin:base,'X-Workbench-Token':session.token,'Content-Type':'application/json'};assert.equal((await fetch(base+'/api/notion/import',{method:'POST',headers,body:'{}'})).status,200);assert.equal(calls,1);assert.equal((await fetch(base+'/api/notion/import',{method:'POST',headers:{...headers,'Content-Type':'text/plain'},body:'{}'})).status,415);assert.equal((await fetch(base+'/api/notion/snapshot',{method:'POST',headers,body:' '.repeat(8*1024*1024+1)})).status,413);assert.equal(calls,1);
+ }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
