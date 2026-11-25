@@ -1,7 +1,7 @@
 import { createFlowStartIntent, startDurableFlow, updateDurableFlowProject, settleDurableFlow, settleCheckpointFlow, flowStartTime, validateFlowEnd } from './timers/sessions.js';
 import { recordsInRange, segmentHours, splitTimeSegments, preserveSegmentedTiming, timeStatsFor as sharedTimeStatsFor } from './model/time.js';
 import { initializeWorkbench } from './bootstrap.js';
-import { parseProfileBackup, makeProfileBackup } from './model/workspace.js';
+import { parseProfileBackup, makeProfileBackup, aiReportProjection, reportOverrideKey } from './model/workspace.js';
 import { validateAvatar } from './profile/avatar.js';
 const workbench = await initializeWorkbench();
 const sessionIds = {};
@@ -74,6 +74,7 @@ let checkpointBusy = false;
     if (!Array.isArray(logs)) logs = [];
     logs = logs.map(normalizeLog);
     let tasks = normalizeTasks(safeJsonRead(profileTasksKey(activeProfileId), []));
+    let reportOverrides = {};
     let mode = 'week';
     let editingId = null;
     let periodReportEditing = false;
@@ -129,12 +130,14 @@ let checkpointBusy = false;
       if (flowStartedAt || meetingStartedAt || taskTracking || meetingDraft) { toast('请先结束计时再切换用户。'); return; }
       const target = profiles.find((item) => item.id === id);
       if (!target || target.id === activeProfileId) return;
+      cancelAiReport();
       resetReportEditors();
       activeProfileId = target.id;
       logs = safeJsonRead(profileDataKey(activeProfileId), []);
       if (!Array.isArray(logs)) logs = [];
       logs = logs.map(normalizeLog);
       tasks = normalizeTasks(safeJsonRead(profileTasksKey(activeProfileId), []));
+      reportOverrides = target.reportOverrides || {};
       taskTracking = null;
       if (taskTrackingTimer) window.clearInterval(taskTrackingTimer);
       taskTrackingTimer = null;
@@ -359,7 +362,8 @@ let checkpointBusy = false;
       get('duration-preview').textContent=hours.toFixed(1)+' 小时';
     }
     function rangeFor(currentMode, anchor) {
-      const pivot = new Date(anchor + 'T12:00:00');
+      const parsed = new Date(anchor + 'T12:00:00');
+      const pivot = Number.isFinite(parsed.getTime()) ? parsed : new Date(today() + 'T12:00:00');
       const start = new Date(pivot);
       const end = new Date(pivot);
       if (currentMode === 'week') {
@@ -677,7 +681,9 @@ let checkpointBusy = false;
       get('daily-hours-total').textContent = report.total.toFixed(1);
       get('daily-done-total').textContent = report.done;
       get('daily-project-total').textContent = report.projects;
-      if (!dailyReportEditing) get('daily-report-text').value = report.text;
+      const override = reportOverrides[reportOverrideKey('day',selectedDate,selectedDate)];
+      if (!dailyReportEditing) get('daily-report-text').value = override?.text ?? report.text;
+      get('restore-daily-report').hidden = !override;
       renderProjectShare(get('daily-project-share'), report.projectHours, report.total, '选择日期后，这里会生成当日各项目的工时占比图。', '本日总时长');
       const list = get('daily-work-list');
       if (!items.length) {
@@ -709,7 +715,9 @@ let checkpointBusy = false;
       get('hours-total').textContent = report.total.toFixed(1);
       get('done-total').textContent = report.done;
       get('project-total').textContent = report.projects;
-      if (!periodReportEditing) get('report-text').value = report.text;
+      const override = reportOverrides[reportOverrideKey(mode,range.start,range.end)];
+      if (!periodReportEditing) get('report-text').value = override?.text ?? report.text;
+      get('restore-period-report').hidden = !override;
       syncPeriodReportHeight();
       get('log-count').textContent = logs.length + ' 条记录';
       const list = get('log-list');
@@ -740,6 +748,106 @@ let checkpointBusy = false;
     function resetReportEditors() {
       setReportEditing('period', false);
       setReportEditing('daily', false);
+    }
+    function reportScope(type) {
+      const kind=type==='daily'?'day':mode;
+      const range=kind==='day'?{start:get('daily-date').value||today(),end:get('daily-date').value||today()}:rangeFor(mode,get('anchor-date').value);
+      return {kind,...range,key:reportOverrideKey(kind,range.start,range.end)};
+    }
+    async function persistReport(type,text,source,expectedReport=null) {
+      const scope=reportScope(type),profileId=activeProfileId,workspaceId=workbench.controller.getWorkspace().workspaceId;
+      try {
+        await workbench.flushLegacy();
+        if(workbench.controller.getWorkspace().workspaceId!==workspaceId||activeProfileId!==profileId||reportScope(type).key!==scope.key)throw Error('数据来源或报告范围已变化，请重试');
+        await workbench.controller.commit(w=>{
+          const profile=w.profiles.find(p=>p.id===profileId);
+          if(!profile)throw Error('当前用户已变化');
+          if(expectedReport&&JSON.stringify(aiReportProjection(profile,scope.kind,scope.start,scope.end))!==JSON.stringify(expectedReport))throw Error('工作记录已变化，请重新预览');
+          profile.reportOverrides ||= {};
+          if(text===null)delete profile.reportOverrides[scope.key];
+          else profile.reportOverrides[scope.key]={text,source,savedAt:new Date().toISOString()};
+          return w;
+        });
+        workbench.sync();
+        return true;
+      } catch(error){toast('报告未保存：'+error.message);return false;}
+    }
+    async function finishReportEditing(type) {
+      const value=get(type==='period'?'report-text':'daily-report-text').value;
+      if(await persistReport(type,value,'manual')){setReportEditing(type,false);render();toast('本期报告已保存。');}
+    }
+    const aiLocal=location.protocol==='http:'&&location.hostname==='127.0.0.1'&&location.port==='4173';
+    let aiToken='',aiConnected=false,aiPoll=null,aiRequestId=0,aiDraftScope=null,aiAbortController=null;
+    function cancelAiReport(){
+      aiRequestId++;
+      aiAbortController?.abort();aiAbortController=null;
+      aiDraftScope=null;
+      if(get('ai-report-dialog').open)get('ai-report-dialog').close();
+    }
+    function aiScope(type){
+      const w=workbench.controller.getWorkspace(),scope=reportScope(type),profile=w.profiles.find(p=>p.id===w.activeProfileId);
+      return {...scope,profileId:w.activeProfileId,workspaceId:w.workspaceId,report:aiReportProjection(profile,scope.kind,scope.start,scope.end)};
+    }
+    function sameAiScope(snapshot,type){
+      const now=aiScope(type);
+      return now.workspaceId===snapshot.workspaceId&&now.profileId===snapshot.profileId&&now.key===snapshot.key&&JSON.stringify(now.report)===JSON.stringify(snapshot.report);
+    }
+    function estimateAiBatches(items){
+      const encoder=new TextEncoder();let batches=0,current=[];
+      for(const item of items){
+        const next=[...current,item];
+        if(current.length&&(next.length>100||encoder.encode(JSON.stringify(next)).byteLength>64*1024)){
+          batches++;current=[item];
+        }else current=next;
+      }
+      return batches+(current.length||!batches?1:0);
+    }
+    function formatAiPreview(report){
+      if(!report.items.length)return '本期没有已保存记录。';
+      return report.items.map((item,index)=>[
+        (index+1)+'. '+item.workDate+' · '+item.title,
+        '项目：'+item.project+'　时长：'+item.hours+' 小时　进度：'+item.progress+'%',
+        '产出：'+item.outcome,
+        '下一步：'+item.nextStep
+      ].join('\n')).join('\n\n');
+    }
+    function aiGenerationErrorMessage(error){
+      return '生成失败：'+error.message+((error.code==='AI_RATE_LIMIT'||error.status===429)?'。当前额度或请求频率受限，请稍后重试并检查 ChatGPT 账户额度。':'');
+    }
+    async function aiApi(path,body,guard=()=>true,signal){
+      if(!aiToken){
+        const session=await fetch('/api/ai/session',{headers:{'X-Workbench-Request':'1'},cache:'no-store',signal});
+        if(!session.ok)throw Error('无法建立本机授权会话');
+        aiToken=(await session.json()).token;
+      }
+      if(!guard())throw Error('工作记录或报告范围已变化，请重新预览');
+      const response=await fetch('/api/ai/'+path,{method:body===undefined?'GET':'POST',headers:{'X-Workbench-Request':'1','X-Workbench-Token':aiToken,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal});
+      const result=await response.json().catch(()=>({}));
+      if(!response.ok){const error=Error(result.error||'ChatGPT 请求失败');error.code=result.code||'';error.status=response.status;throw error;}
+      return result;
+    }
+    function showAiStatus(status){
+      aiConnected=!!status.connected;
+      get('ai-account-status').textContent=aiConnected?'已连接'+(status.accountLabel?' · '+status.accountLabel:'')+(status.model?' · '+status.model:''):'未连接 ChatGPT。连接后可在报告页面生成草稿。';
+      get('ai-connect').hidden=aiConnected;
+      get('ai-disconnect').hidden=!aiConnected;
+      get('ai-period-report').hidden=!aiConnected;
+      get('ai-daily-report').hidden=!aiConnected;
+    }
+    async function refreshAiStatus(){try{showAiStatus(await aiApi('status'));}catch(error){showAiStatus({connected:false});get('ai-account-status').textContent='连接状态暂不可用：'+error.message;}}
+    function openAiReport(type){
+      if(!aiConnected)return toast('请先在用户与数据管理中连接 ChatGPT。');
+      cancelAiReport();
+      const scope=aiScope(type);
+      aiDraftScope={...scope,type};
+      const label={day:'本日',week:'本周',month:'本月',year:'本年'}[scope.kind];
+      get('ai-report-dialog-title').textContent='AI 辅助生成'+label+'报告';
+      get('ai-report-scope').textContent=scope.start+' 至 '+scope.end+' · '+scope.report.recordCount+' 条已保存记录。确认后才会发送下方内容。';
+      const batches=estimateAiBatches(scope.report.items);
+      get('ai-report-batches').textContent=batches>1?'预计分为约 '+batches+' 批处理，并在最后合成草稿；通常需要约 '+(batches+1)+' 次模型调用。':'预计 1 次模型调用。';
+      get('ai-report-preview').textContent=formatAiPreview(scope.report);
+      get('ai-report-state').textContent='';get('ai-draft-label').hidden=true;get('ai-report-draft').value='';get('ai-report-save').hidden=true;get('ai-report-generate').hidden=false;get('ai-report-generate').disabled=!scope.report.recordCount;
+      get('ai-report-dialog').showModal();
     }
     function persistData() {
       window.appStorage.setItem(profileDataKey(activeProfileId), JSON.stringify(logs));
@@ -814,11 +922,12 @@ let checkpointBusy = false;
           const records = normalizeImportedRecords(parsed.records);
           const importedTasks = normalizeTasks(parsed.tasks);
           const sourceName = !Array.isArray(backup) && backup.profile && backup.profile.name ? backup.profile.name : file.name.replace(/\.json$/i, '');
-          const profile = { id: 'user-' + Date.now() + '-' + Math.random().toString(16).slice(2), name: uniqueProfileName(sourceName), avatar };
+      const profile = { id: 'user-' + Date.now() + '-' + Math.random().toString(16).slice(2), name: uniqueProfileName(sourceName), avatar, reportOverrides: parsed.reportOverrides || {} };
           profiles.push(profile);
           activeProfileId = profile.id;
           logs = records;
           tasks = importedTasks;
+          reportOverrides = profile.reportOverrides;
           resetReportEditors();
           window.appStorage.setItem(profileDataKey(activeProfileId), JSON.stringify(logs));
           window.appStorage.setItem(profileTasksKey(activeProfileId), JSON.stringify(tasks));
@@ -1307,11 +1416,12 @@ let checkpointBusy = false;
         toast('请先填写使用者名称。');
         return;
       }
-      const profile = { id: 'user-' + Date.now() + '-' + Math.random().toString(16).slice(2), name: uniqueProfileName(requestedName) };
+      const profile = { id: 'user-' + Date.now() + '-' + Math.random().toString(16).slice(2), name: uniqueProfileName(requestedName), reportOverrides: {} };
       profiles.push(profile);
       activeProfileId = profile.id;
       logs = [];
       tasks = [];
+      reportOverrides = {};
       resetReportEditors();
       window.appStorage.setItem(profileDataKey(activeProfileId), JSON.stringify(logs));
       window.appStorage.setItem(profileTasksKey(activeProfileId), JSON.stringify(tasks));
@@ -1334,6 +1444,7 @@ let checkpointBusy = false;
     });
     function setSummaryMode(nextMode) {
       if (!['week', 'month', 'year'].includes(nextMode)) return;
+      cancelAiReport();
       mode = nextMode;
       document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item.dataset.mode === nextMode));
       setReportEditing('period', false);
@@ -1341,10 +1452,12 @@ let checkpointBusy = false;
     }
     document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => setSummaryMode(button.dataset.mode)));
     get('anchor-date').addEventListener('change', () => {
+      cancelAiReport();
       setReportEditing('period', false);
       render();
     });
     get('daily-date').addEventListener('change', () => {
+      cancelAiReport();
       setReportEditing('daily', false);
       renderDailyReport();
     });
@@ -1606,8 +1719,7 @@ let checkpointBusy = false;
       catch { get('report-text').select(); document.execCommand('copy'); toast('报告已复制。'); }
     });
     get('toggle-period-report').addEventListener('click', () => {
-      setReportEditing('period', !periodReportEditing);
-      if (!periodReportEditing) toast('报告已锁定。');
+      if(periodReportEditing)finishReportEditing('period');else setReportEditing('period',true);
     });
     get('report-text').addEventListener('input', syncPeriodReportHeight);
     window.addEventListener('resize', syncPeriodReportHeight);
@@ -1616,9 +1728,54 @@ let checkpointBusy = false;
       catch { get('daily-report-text').select(); document.execCommand('copy'); toast('本日报告已复制。'); }
     });
     get('toggle-daily-report').addEventListener('click', () => {
-      setReportEditing('daily', !dailyReportEditing);
-      if (!dailyReportEditing) toast('本日报告已锁定。');
+      if(dailyReportEditing)finishReportEditing('daily');else setReportEditing('daily',true);
     });
+    for(const type of ['period','daily']){
+      get('restore-'+type+'-report').addEventListener('click',async()=>{
+        if(await persistReport(type,null,'manual')){setReportEditing(type,false);render();toast('已恢复自动报告。');}
+      });
+      get('ai-'+type+'-report').addEventListener('click',()=>openAiReport(type));
+    }
+    get('ai-report-cancel').addEventListener('click',cancelAiReport);
+    get('ai-report-dialog').addEventListener('cancel',cancelAiReport);
+    get('ai-report-dialog').addEventListener('close',()=>{if(aiDraftScope&&!get('ai-report-dialog').open)cancelAiReport();});
+    window.addEventListener('pagehide',cancelAiReport);
+    get('ai-report-generate').addEventListener('click',async()=>{
+      const scope=aiDraftScope;if(!scope||!sameAiScope(scope,scope.type))return;
+      const id=++aiRequestId;
+      aiAbortController?.abort();
+      aiAbortController=new AbortController();
+      get('ai-report-generate').disabled=true;get('ai-report-state').textContent=estimateAiBatches(scope.report.items)>1?'正在分批处理中，完成所有批次及合成后会显示草稿；请稍候…':'正在生成草稿，请稍候…';
+      try{
+        const result=await aiApi('generate',{report:scope.report},()=>id===aiRequestId&&get('ai-report-dialog').open&&sameAiScope(scope,scope.type),aiAbortController.signal);
+        if(id!==aiRequestId||!get('ai-report-dialog').open)return;
+        if(!sameAiScope(scope,scope.type)){get('ai-report-state').textContent='工作记录或报告范围已变化，请重新打开并预览。';return;}
+        if(String(result.text||'').length>100000)throw Error('AI 草稿超过本地报告可保存长度，未截断或修改原报告。');
+        get('ai-report-draft').value=String(result.text||'');
+        get('ai-draft-label').hidden=false;get('ai-report-save').hidden=false;get('ai-report-generate').hidden=true;
+        get('ai-report-state').textContent='草稿已生成'+(result.model?' · '+result.model:'')+'。可修改后保存。';
+      }catch(error){if(id===aiRequestId)get('ai-report-state').textContent=aiGenerationErrorMessage(error);}
+      finally{if(id===aiRequestId){aiAbortController=null;get('ai-report-generate').disabled=false;}}
+    });
+    get('ai-report-save').addEventListener('click',async()=>{
+      const scope=aiDraftScope;if(!scope||!sameAiScope(scope,scope.type)){get('ai-report-state').textContent='报告范围或工作记录已变化，请重新生成。';return;}
+      const text=get('ai-report-draft').value.trim();if(!text){get('ai-report-state').textContent='请填写草稿内容。';return;}
+      get('ai-report-save').disabled=true;
+      if(await persistReport(scope.type,text,'ai',scope.report)){get('ai-report-dialog').close();aiDraftScope=null;setReportEditing(scope.type,false);render();toast('AI 草稿已保存为本期报告。');}
+      get('ai-report-save').disabled=false;
+    });
+    get('ai-connect').addEventListener('click',async()=>{
+      const popup=window.open('about:blank','_blank');
+      try{
+        const result=await aiApi('connect',{});
+        if(popup)popup.location.href=result.authorizeUrl;else toast('浏览器拦截了授权窗口，请允许弹出窗口后重试。');
+        clearInterval(aiPoll);aiPoll=setInterval(async()=>{try{const status=await aiApi('status');showAiStatus(status);if(status.connected){clearInterval(aiPoll);aiPoll=null;if(popup&&!popup.closed)popup.close();toast('ChatGPT 已连接。');}}catch{}},2000);
+        setTimeout(()=>{if(aiPoll){clearInterval(aiPoll);aiPoll=null;}},120000);
+      }catch(error){if(popup)popup.close();get('ai-account-status').textContent='连接失败：'+error.message;}
+    });
+    get('ai-disconnect').addEventListener('click',async()=>{try{const result=await aiApi('disconnect',{});showAiStatus(result);if(result.revocationConfirmed===false){get('ai-account-status').textContent='本机连接已清除，远端撤销未确认。请在 ChatGPT 设置中撤销应用访问。';toast('本机已断开，远端撤销未确认。');}else toast('ChatGPT 已断开。');}catch(error){get('ai-account-status').textContent='断开失败：'+error.message;}});
+    if(aiLocal)refreshAiStatus();
+    else {get('ai-connect').disabled=true;get('ai-account-status').textContent='AI 辅助生成仅在本机 http://127.0.0.1:4173/ 服务可用。';}
     get('export-word').addEventListener('click', () => {
       downloadBlob(createDocx(get('report-text').value), reportFilename() + '.docx');
       toast('已导出可编辑 Word 文档。');
@@ -1644,11 +1801,13 @@ let checkpointBusy = false;
     }
     workbench.bind({
       refresh(workspace) {
+        if(aiDraftScope&&!sameAiScope(aiDraftScope,aiDraftScope.type))cancelAiReport();
         if(flowStartIntent&&flowStartIntent.workspaceId!==workspace.workspaceId){flowStartIntent=null;}
-        profiles = workspace.profiles.map(({id,name,avatar}) => ({id,name,avatar}));
+        profiles = workspace.profiles.map(({id,name,avatar,reportOverrides}) => ({id,name,avatar,reportOverrides:reportOverrides||{}}));
         activeProfileId = workspace.activeProfileId;
         const profile = workspace.profiles.find(p => p.id === activeProfileId);
         logs = profile.records.map(normalizeLog); tasks = normalizeTasks(profile.tasks);
+        reportOverrides = profile.reportOverrides || {};
         render(); renderProfiles();
         if(document.querySelector('.session-recovery')){renderSessionRecovery();renderFlowRecovery();}
       },

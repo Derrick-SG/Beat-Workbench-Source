@@ -457,6 +457,16 @@
     }
     [hidden] { display: none !important; }
     dialog:not([open]) { display: none; }
+    .ai-account { border-top: 1px solid var(--line); padding-top: 14px; }
+    .ai-account h3 { margin: 0 0 8px; }
+    .ai-account p { margin: 0 0 10px; }
+    .ai-privacy-note { font-size: 13px; line-height: 1.6; }
+    #ai-report-dialog { width: min(720px, calc(100% - 28px)); }
+    #ai-report-dialog .dialog-body { max-height: min(92vh, 900px); overflow-y: auto; }
+    #ai-report-batches { margin: -8px 0 0; font-size: 13px; color: var(--muted); }
+    .ai-report-preview { min-height: 100px; max-height: min(50vh, 520px); overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.45); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
+    #ai-report-draft { min-height: 240px; width: 100%; }
+    #ai-report-state { min-height: 1.4em; }
     html { min-width: 0; background: var(--canvas); }
     body {
       min-width: 0;

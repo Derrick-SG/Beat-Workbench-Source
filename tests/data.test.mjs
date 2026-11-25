@@ -47,7 +47,7 @@ test('v3 backup imports independently and exports/reimports complete supported f
   assert.deepEqual(plain(c.tasks), [task]);
   c.exportBackup();
   const backup = JSON.parse(await c.download.blob.text());
-  assert.equal(backup.version, 4);
+  assert.equal(backup.version, 5);
   assert.deepEqual(backup.records, [record]);
   assert.deepEqual(backup.tasks, [task]);
   const next = harness();

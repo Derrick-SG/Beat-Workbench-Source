@@ -3,7 +3,28 @@ export function uid() { return globalThis.crypto?.randomUUID?.() || 'id-' + Date
 export function storageError(code, message) { return Object.assign(new Error(message), {code}); }
 export function newWorkspace() {
   const id=uid();
-  return {format:'Beat-Workbench/workspace',schemaVersion:1,workspaceId:uid(),revision:0,updatedAt:new Date().toISOString(),activeProfileId:id,profiles:[{id,name:'我的工作台',avatar:null,records:[],tasks:[]}],sessions:[],settledSessionIds:[]};
+  return {format:'Beat-Workbench/workspace',schemaVersion:1,workspaceId:uid(),revision:0,updatedAt:new Date().toISOString(),activeProfileId:id,profiles:[{id,name:'我的工作台',avatar:null,records:[],tasks:[],reportOverrides:{}}],sessions:[],settledSessionIds:[]};
+}
+const reportKinds=new Set(['day','week','month','year']);
+export function reportOverrideKey(kind,start,end){
+  if(!reportKinds.has(kind)||!/^\d{4}-\d{2}-\d{2}$/.test(start)||!/^\d{4}-\d{2}-\d{2}$/.test(end)||start>end)throw storageError('invalid','报告范围无效');
+  return kind+':'+start+':'+end;
+}
+export function validateReportOverrides(value){
+  if(value===undefined)return {};
+  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length>500)throw storageError('invalid','报告草稿无效');
+  for(const [key,entry] of Object.entries(value)){
+    const match=/^(day|week|month|year):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(key);
+    if(!match||reportOverrideKey(match[1],match[2],match[3])!==key||!entry||typeof entry.text!=='string'||entry.text.length>100000||!['ai','manual'].includes(entry.source)||!Number.isFinite(Date.parse(entry.savedAt)))throw storageError('invalid','报告草稿无效');
+  }
+  return value;
+}
+export function aiReportProjection(profile,kind,start,end){
+  reportOverrideKey(kind,start,end);
+  const items=(profile.records||[]).filter(r=>r.workDate>=start&&r.workDate<=end).map(r=>({
+    title:String(r.title||'').slice(0,240),workDate:r.workDate,project:String(r.project||'').slice(0,120),hours:Number(r.hours),outcome:String(r.outcome||'').slice(0,5000),nextStep:String(r.nextStep||'').slice(0,5000),progress:Number(r.progress)||0
+  })).sort((a,b)=>a.workDate.localeCompare(b.workDate)||a.title.localeCompare(b.title));
+  return {kind,start,end,recordCount:items.length,items};
 }
 export function validateAvatarShape(avatar) {
   if (avatar == null) return null;
@@ -22,7 +43,7 @@ export function validateWorkspace(value) {
   if(value.flowClosures!==undefined&&(!Array.isArray(value.flowClosures)||value.flowClosures.some(r=>!r||typeof r.sessionId!=='string'||typeof r.profileId!=='string'||!Number.isFinite(r.startedAt)||!Number.isFinite(Date.parse(r.checkpointAt))||r.elapsedMs!==0||r.reason!=='no-positive-checkpoint')))throw storageError('invalid','心流零时长结束凭据无效');
   for (const p of value.profiles) {
     if (!p || typeof p.id!=='string' || !p.id || ids.has(p.id) || typeof p.name!=='string' || !p.name.trim() || p.name.length>30 || names.has(p.name) || !Array.isArray(p.records) || !Array.isArray(p.tasks)) throw storageError('invalid','工作区资料无效或重复');
-    validateAvatarShape(p.avatar); ids.add(p.id); names.add(p.name);
+    validateAvatarShape(p.avatar);validateReportOverrides(p.reportOverrides); ids.add(p.id); names.add(p.name);
     const recordIds=new Set(),taskIds=new Set();
     for(const r of p.records){
       if(!r || !Number.isSafeInteger(r.id) || recordIds.has(r.id) || typeof r.workDate!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(r.workDate) || !Number.isFinite(Date.parse(r.workDate)) || new Date(r.workDate+'T12:00:00Z').toISOString().slice(0,10)!==r.workDate || typeof r.title!=='string' || typeof r.project!=='string' || !Number.isFinite(r.hours) || r.hours<=0 || (r.hours>24 && (!Array.isArray(r.timeSegments)||!r.timeSegments.length||Math.abs(segmentHours(r.timeSegments)-r.hours)>1e-7)) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(r.startTime) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(r.endTime))throw storageError('invalid','记录ID、日期、时段或工时无效');
@@ -59,14 +80,15 @@ export function readLegacyBrowser(storage) {
 }
 export function parseProfileBackup(value) {
   if (Array.isArray(value)) return {name:'恢复的工作台',avatar:null,records:value,tasks:[]};
-  if (!value || value.format || !Array.isArray(value.records) || ![undefined,3,4].includes(value.version)) throw storageError('invalid','备份格式或版本不支持');
+  if (!value || value.format || !Array.isArray(value.records) || ![undefined,3,4,5].includes(value.version)) throw storageError('invalid','备份格式或版本不支持');
   const avatar=value.version===4?validateAvatarShape(value.profile?.avatar):null;
-  return {name:String(value.profile?.name||'恢复的工作台'),avatar,records:value.records,tasks:Array.isArray(value.tasks)?value.tasks:[]};
+  return {name:String(value.profile?.name||'恢复的工作台'),avatar:value.version===5?validateAvatarShape(value.profile?.avatar):avatar,records:value.records,tasks:Array.isArray(value.tasks)?value.tasks:[],...(value.version===5?{reportOverrides:structuredClone(validateReportOverrides(value.reportOverrides))}:{})};
 }
-export function makeProfileBackup(profile) {return {app:'节拍工作台',version:4,exportedAt:new Date().toISOString(),profile:{name:profile.name,avatar:profile.avatar||null},records:structuredClone(profile.records),tasks:structuredClone(profile.tasks)};}
+export function makeProfileBackup(profile) {return {app:'节拍工作台',version:5,exportedAt:new Date().toISOString(),profile:{name:profile.name,avatar:profile.avatar||null},records:structuredClone(profile.records),tasks:structuredClone(profile.tasks),reportOverrides:structuredClone(validateReportOverrides(profile.reportOverrides))};}
 export function settleLegacySnapshot(workspace,profiles,activeProfileId){
   const w=structuredClone(workspace),existing=new Map(w.profiles.flatMap(p=>p.records.filter(r=>r.sessionId).map(r=>[r.sessionId,r.id]))),seen=new Set(),settled=new Set(w.settledSessionIds);
-  w.profiles=structuredClone(profiles).map(p=>({...p,records:p.records.filter(r=>{
+  const priorProfiles=new Map(w.profiles.map(p=>[p.id,p]));
+  w.profiles=structuredClone(profiles).map(p=>({...p,reportOverrides:structuredClone(validateReportOverrides(p.reportOverrides??priorProfiles.get(p.id)?.reportOverrides)),records:p.records.filter(r=>{
     if(!r.sessionId)return true;
     if(seen.has(r.sessionId))return false;seen.add(r.sessionId);
     if(settled.has(r.sessionId)&&existing.get(r.sessionId)!==r.id)return false;

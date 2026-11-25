@@ -1,4 +1,5 @@
 import { createNotionApi } from './notion/api.mjs';
+import { createAiApi } from './ai/api.mjs';
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -16,7 +17,9 @@ const assets = new Map([
 for(const name of ['bootstrap.js','model/workspace.js','model/time.js','profile/avatar.js','profile/editor.js','storage/browser.js','storage/directory.js','storage/settings.js','storage/controller.js','timers/sessions.js','sync/notion.js','sync/projection.js']) assets.set('/'+name,[name,'text/javascript; charset=utf-8']);
 export function createServer(options={}) {
   const notionApi=createNotionApi(options);
+  const aiApi=createAiApi(options);
   const server=http.createServer(async (request, response) => {
+    if(await aiApi.handle(request,response))return;
     if(await notionApi.handle(request,response))return;
     if (!['GET', 'HEAD'].includes(request.method)) { response.writeHead(405, { Allow: 'GET, HEAD' }); response.end(); return; }
     if((request.url||'').split('?')[0]==='/__beat-workbench-health'){response.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});response.end(request.method==='HEAD'?undefined:JSON.stringify({app:'Beat-Workbench',project:projectIdentity,pid:process.pid}));return;}
